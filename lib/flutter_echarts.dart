@@ -7,7 +7,8 @@ import 'dart:io' show Platform;
 import 'package:flutter/widgets.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+
+import 'package:webview_flutter/webview_flutter.dart';
 
 import 'echarts_script.dart' show echartsScript;
 
@@ -48,9 +49,9 @@ class Echarts extends StatefulWidget {
 
   final bool captureVerticalGestures;
 
-  final void Function(InAppWebViewController)? onLoad;
+  final void Function(WebViewController)? onLoad;
 
-  final void Function(InAppWebViewController, Exception)? onWebResourceError;
+  final void Function(WebViewController, Exception)? onWebResourceError;
 
   final bool reloadAfterInit;
 
@@ -59,7 +60,7 @@ class Echarts extends StatefulWidget {
 }
 
 class _EchartsState extends State<Echarts> {
-  InAppWebViewController? _controller;
+  WebViewController? _controller;
 
   String? _currentOption;
 
@@ -72,6 +73,8 @@ class _EchartsState extends State<Echarts> {
     super.initState();
     _currentOption = widget.option;
 
+    if (Platform.isAndroid) WebView.platform = SurfaceAndroidWebView();
+
     if (widget.reloadAfterInit) {
       new Future.delayed(const Duration(milliseconds: 100), () {
         _controller?.reload();
@@ -82,7 +85,7 @@ class _EchartsState extends State<Echarts> {
   void init() async {
     final extensionsStr = this.widget.extensions.length > 0 ? this.widget.extensions.reduce((value, element) => value + '\n' + element) : '';
     final themeStr = this.widget.theme != null ? '\'${this.widget.theme}\'' : 'null';
-    await _controller?.evaluateJavascript(source: '''
+    await _controller?.evaluateJavascript('''
       $echartsScript
       $extensionsStr
       var chart = echarts.init(document.getElementById('chart'), $themeStr);
@@ -122,7 +125,7 @@ class _EchartsState extends State<Echarts> {
   void update(String preOption) async {
     _currentOption = widget.option;
     if (_currentOption != preOption) {
-      await _controller?.evaluateJavascript(source: '''
+      await _controller?.evaluateJavascript('''
         try {
           chart.setOption($_currentOption, true);
         } catch(e) {
@@ -153,12 +156,13 @@ class _EchartsState extends State<Echarts> {
     return Opacity(
         opacity: _opacity,
         // --- FIX_BLINK ---
-        child: InAppWebView(
-            initialFile: htmlBase64,
-            onWebViewCreated: (InAppWebViewController webViewController) {
+        child: WebView(
+            initialUrl: htmlBase64,
+            javascriptMode: JavascriptMode.unrestricted,
+            onWebViewCreated: (WebViewController webViewController) {
               _controller = webViewController;
             },
-            onLoadStop: (controller, url) {
+            onPageFinished: (String url) {
               // --- FIX_BLINK ---
               if (Platform.isAndroid) {
                 setState(() {
@@ -168,20 +172,20 @@ class _EchartsState extends State<Echarts> {
               // --- FIX_BLINK ---
               init();
             },
-            onLoadError: (controller, url, code, message) {
+            onWebResourceError: (e) {
               if (widget.onWebResourceError != null) {
-                widget.onWebResourceError!(_controller!, Exception(message));
+                widget.onWebResourceError!(_controller!, Exception(e));
               }
             },
-            // javascriptChannels: <JavascriptChannel>[
-            //   JavascriptChannel(
-            //       name: 'Messager',
-            //       onMessageReceived: (JavascriptMessage javascriptMessage) {
-            //         if (widget.onMessage != null) {
-            //           widget.onMessage!(javascriptMessage.message);
-            //         }
-            //       }),
-            // ].toSet(),
+            javascriptChannels: <JavascriptChannel>[
+              JavascriptChannel(
+                  name: 'Messager',
+                  onMessageReceived: (JavascriptMessage javascriptMessage) {
+                    if (widget.onMessage != null) {
+                      widget.onMessage!(javascriptMessage.message);
+                    }
+                  }),
+            ].toSet(),
             gestureRecognizers: getGestureRecognizers()));
   }
 }
